@@ -5,7 +5,7 @@
   "use strict";
 
   // ------------------------------------------------------------------ constants
-  const NO_VALUE = -1, NO_LAND = -2;
+  const NO_VALUE = -1, NO_LAND = -2, NO_LAND_OK = -3;
   const RECORD_URL = (acct) => `https://property.spatialest.com/co/gunnison#/property/${encodeURIComponent(acct)}`;
   const NEIGHBOR_CATS = ["lea", "land_primary", "views", "access_surface", "access_maint",
                          "electricity", "sewer", "water"];
@@ -18,7 +18,7 @@
     same_as_primary:     { label: "Secondary = primary",       group: "conflict", about: "Secondary land type is the same as the primary land type." },
     legacy:              { label: "Legacy access code only",   group: "legacy",   about: "Site access carries only the older YEAR ROUND / SEASONAL code with no road type." },
     improved_no_utility: { label: "Improved, utility shows none", group: "improved", about: "The account is improved (residential, condo, commercial or mobile home with improvement value > $0) but a utility shows none / not installed / not available (off-grid excluded)." },
-    no_land:             { label: "No land record",            group: "no_land",  about: "The account is in the general account download but has no row in the Land Attributes download." },
+    no_land:             { label: "No land record",            group: "no_land",  about: "The account is in the general account download but has no row in the Land Attributes download. Mobile home (M) accounts and condos are excluded: they normally have no land line." },
     unmapped:            { label: "Not on parcel map",         group: "unmapped", about: "No parcel polygon matches the account or parcel number (usually mineral / oil & gas interests or new accounts)." },
   };
   const ISSUE_COLS = [
@@ -70,7 +70,10 @@
   let map, mapReady = false, prevH = null, prevF = null, selFp = -1;
 
   const acctPass = (a) => (!S.types.size || S.types.has(a.type)) && (!S.area || a.area === S.area);
-  const valName = (ci, v) => v === NO_VALUE ? "No value recorded" : v === NO_LAND ? "No land record" : VALUES[ci][v];
+  // Mobile home (M…) accounts and condo units normally carry no land line, so a missing land record is expected.
+  const landExpected = (a) => !(a.account.startsWith("M") || a.improvedType === "Condo" || a.condo);
+  const noLandKind = (a) => a.account.startsWith("M") ? "Mobile home account" : "Condo unit";
+  const valName = (ci, v) => v === NO_VALUE ? "No value recorded" : v === NO_LAND ? "No land record" : v === NO_LAND_OK ? "Mobile home / condo (no land line)" : VALUES[ci][v];
   const keyName = (ci, key) => key === "" ? "(blank)" : key.split("|").map((v) => VALUES[ci][+v]).join(" + ");
 
   // ------------------------------------------------------------------ load
@@ -107,13 +110,13 @@
     if (p.has("c") && CAT_IX[p.get("c")] != null) S.ci = CAT_IX[p.get("c")];
     if (p.has("v")) {
       const v = p.get("v");
-      S.val = v === "_none" ? NO_VALUE : v === "_noland" ? NO_LAND : Math.max(0, VALUES[S.ci].indexOf(v));
+      S.val = v === "_none" ? NO_VALUE : v === "_noland" ? NO_LAND : v === "_mhcondo" ? NO_LAND_OK : Math.max(0, VALUES[S.ci].indexOf(v));
     }
     return page || "map";
   }
   function writeHash() {
     if (currentPage() !== "map") return;
-    const v = S.val === NO_VALUE ? "_none" : S.val === NO_LAND ? "_noland" : VALUES[S.ci][S.val];
+    const v = S.val === NO_VALUE ? "_none" : S.val === NO_LAND ? "_noland" : S.val === NO_LAND_OK ? "_mhcondo" : VALUES[S.ci][S.val];
     history.replaceState(null, "", `#map?c=${encodeURIComponent(CATS[S.ci].key)}&v=${encodeURIComponent(v)}`);
   }
   const currentPage = () => (location.hash.slice(1).split("?")[0] || "map");
@@ -222,22 +225,22 @@
 
   // ------------------------------------------------------------------ value list
   function valueCounts(ci) {
-    const counts = new Map(); let noVal = 0, noLand = 0;
+    const counts = new Map(); let noVal = 0, noLand = 0, noLandOk = 0;
     for (const a of A) {
       if (!acctPass(a)) continue;
-      if (!a.hasLand) { noLand++; continue; }
+      if (!a.hasLand) { landExpected(a) ? noLand++ : noLandOk++; continue; }
       const vs = a.attrs[ci];
       if (!vs.length) noVal++;
       for (const v of vs) counts.set(v, (counts.get(v) || 0) + 1);
     }
-    return { counts, noVal, noLand };
+    return { counts, noVal, noLand, noLandOk };
   }
   let visibleVals = [];
   function renderValues() {
-    const ci = S.ci; const { counts, noVal, noLand } = valueCounts(ci);
+    const ci = S.ci; const { counts, noVal, noLand, noLandOk } = valueCounts(ci);
     const items = VALUES[ci].map((name, v) => [v, name, counts.get(v) || 0]).filter((x) => x[2] > 0 || x[0] === S.val);
     items.sort((x, y) => y[2] - x[2]);
-    const specials = [[NO_VALUE, "No value recorded", noVal], [NO_LAND, "No land record", noLand]];
+    const specials = [[NO_VALUE, "No value recorded", noVal], [NO_LAND, "No land record", noLand], [NO_LAND_OK, "Mobile home / condo (no land line)", noLandOk]];
     const q = S.valueText;
     const all = [...items, ...specials].filter(([v, name]) => !q || name.toLowerCase().includes(q) || v === S.val);
     visibleVals = all.map((x) => x[0]);
@@ -252,7 +255,7 @@
     const i = visibleVals.indexOf(S.val);
     selectValue(visibleVals[(i + d + visibleVals.length) % visibleVals.length]);
   }
-  const accountMatches = (a, ci, v) => v === NO_LAND ? !a.hasLand : !a.hasLand ? false : v === NO_VALUE ? a.attrs[ci].length === 0 : a.attrs[ci].includes(v);
+  const accountMatches = (a, ci, v) => v === NO_LAND ? !a.hasLand && landExpected(a) : v === NO_LAND_OK ? !a.hasLand && !landExpected(a) : !a.hasLand ? false : v === NO_VALUE ? a.attrs[ci].length === 0 : a.attrs[ci].includes(v);
 
   // ------------------------------------------------------------------ map
   function initMap() {
@@ -302,7 +305,7 @@
         if (accts.length > 1) html += ` <span class="m">+${accts.length - 1} more account${accts.length > 2 ? "s" : ""}</span>`;
         if (a) {
           const vs = a.hasLand ? a.attrs[S.ci].map((v) => VALUES[S.ci][v]) : null;
-          html += `<div class="m">${esc(CATS[S.ci].label)}: ${esc(vs == null ? "no land record" : vs.length ? vs.join(", ") : "—")}</div>`;
+          html += `<div class="m">${esc(CATS[S.ci].label)}: ${esc(vs == null ? (landExpected(a) ? "no land record" : noLandKind(a).toLowerCase() + ", no land line") : vs.length ? vs.join(", ") : "—")}</div>`;
         } else html += `<div class="m">No account in current data</div>`;
         tipEl.innerHTML = html; tipEl.hidden = false;
         const { x, y } = ev.point; const w = map.getCanvas().clientWidth;
@@ -431,7 +434,7 @@
       <div class="meta">${esc(a.address || "No situs address")}${a.area ? " · " + esc(a.area) : ""}<br>
         Parcel ${esc(a.parcel || "—")}${a.subdivision ? " · " + esc(a.subdivision) : ""}${a.condo ? " · " + esc(a.condo) : ""}<br>
         ${a.landSize ? "Land " + esc(a.landSize) + " · " : ""}${D.valueYear || ""} actual: land ${money(a.landValue)}, impr. ${money(a.impValue)}, total ${money(a.totalValue)}</div>
-      ${a.hasLand ? `<table>${rows.join("")}</table>` : `<div class="empty">No row in the Land Attributes download.</div>`}
+      ${a.hasLand ? `<table>${rows.join("")}</table>` : `<div class="empty">${landExpected(a) ? "No row in the Land Attributes download." : noLandKind(a) + " — no land line expected."}</div>`}
       ${issues.length ? `<ul class="flags">${issues.map((x) => `<li>⚠ <strong>${esc(x.cat)}</strong> — ${esc(ISSUES[x.code].label)}${x.detail ? ": " + esc(x.detail) : ""}</li>`).join("")}</ul>` : ""}
     </div>`;
   }
@@ -498,7 +501,7 @@
   const basisWord = () => (S.nb.basis === "adjacent" ? "neighbors" : "subdivision accounts");
   function issuesFor(i) {
     const a = A[i]; const out = [];
-    if (!a.hasLand) out.push({ code: "no_land", ci: -1, cat: "Land record", detail: "" });
+    if (!a.hasLand && landExpected(a)) out.push({ code: "no_land", ci: -1, cat: "Land record", detail: a.improvedType ? a.improvedType : "" });
     if (a.fp < 0) out.push({ code: "unmapped", ci: -1, cat: "Map", detail: a.parcel ? "parcel " + a.parcel : "" });
     for (const [ci, code, detail] of a.flags) {
       let d = detail;
@@ -526,6 +529,8 @@
     renderChips($("s-type-chips")); $("s-area").value = S.area;
     const acc = A.map((a, i) => i).filter((i) => acctPass(A[i]));
     const land = acc.filter((i) => A[i].hasLand);
+    const expected = acc.filter((i) => landExpected(A[i]));
+    const expectedWith = expected.filter((i) => A[i].hasLand).length;
     const coreCis = D.core.map((k) => CAT_IX[k]);
     const missingAny = land.filter((i) => coreCis.some((ci) => !A[i].attrs[ci].length)).length;
     const conflictCodes = new Set(["multiple", "conflict", "repeated", "same_as_primary"]);
@@ -535,7 +540,7 @@
     const unmapped = acc.filter((i) => A[i].fp < 0).length;
     const tiles = [
       [fmt(acc.length), "Accounts", S.types.size || S.area ? "in current filter" : "all accounts"],
-      [pct(land.length, acc.length).toFixed(1) + "%", "Have a land record", `${fmt(acc.length - land.length)} without`],
+      [pct(expectedWith, expected.length).toFixed(1) + "%", "Have a land record", `${fmt(expected.length - expectedWith)} without · ${fmt(acc.length - expected.length)} mobile home / condo excluded`],
       [fmt(missingAny), "Missing a core attribute", `${pct(missingAny, land.length).toFixed(1)}% of land records`],
       [fmt(conflictAccts), "Data-entry conflicts", "multiple / conflicting / repeated"],
       [fmt(outAccts), "Differ from neighbors", `≥${Math.round(S.nb.agree * 100)}% of ${S.nb.min}+ ${basisWord()} agree`],
@@ -564,7 +569,7 @@
     };
     const byCol = cols.map(([, f]) => acc.filter(f));
     let html = `<thead><tr><th>Attribute</th>${cols.map(([t], k) => `<th class="c">${esc(t)}<br><span style="font-weight:400;text-transform:none">${fmt(byCol[k].length)}</span></th>`).join("")}</tr></thead><tbody>`;
-    html += `<tr><td>Has land record</td>${cols.map(([t], k) => cell(byCol[k], (i) => A[i].hasLand, "land", t)).join("")}</tr>`;
+    html += `<tr><td>Has land record <span style="color:var(--muted)">(excl. mobile homes &amp; condos)</span></td>${cols.map(([t], k) => cell(byCol[k].filter((i) => landExpected(A[i])), (i) => A[i].hasLand, "land", t)).join("")}</tr>`;
     for (const ci of coreCis) {
       const optional = !D.core.includes(CATS[ci].key);
       html += `<tr><td>${esc(CATS[ci].label)}${optional ? ` <span style="color:var(--muted)">(optional)</span>` : ""}</td>${cols.map(([t], k) => cell(byCol[k].filter((i) => A[i].hasLand), (i) => A[i].attrs[ci].length > 0, ci, t)).join("")}</tr>`;
@@ -640,7 +645,7 @@
   function goToIssue(i, ci) {
     const a = A[i];
     if (ci >= 0) { S.ci = ci; S.val = a.hasLand && a.attrs[ci].length ? a.attrs[ci][0] : NO_VALUE; }
-    else { S.val = a.hasLand ? S.val : NO_LAND; }
+    else { S.val = a.hasLand ? S.val : landExpected(a) ? NO_LAND : NO_LAND_OK; }
     $("cat").value = S.ci; S.valueText = ""; $("value-filter").value = "";
     location.hash = "#map";
     setTimeout(() => { focusAccount(i); }, 50);

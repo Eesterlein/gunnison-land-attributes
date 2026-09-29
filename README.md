@@ -67,6 +67,7 @@ This writes `data/parcels.geojson` (shapes) and `data/geo_index.json` (accounts 
 - **Site Access** is split into *road type* (paved, gravel, 4×4, no vehicular access, …) and *maintenance* (year-round or seasonal, government or private).
 - **Multi-value fields** (LEA, utilities, land-use class) are split into individual values, and duplicate entries are removed and flagged.
 - Accounts are joined to parcel shapes by account number, falling back to parcel number.
+- **Mobile homes and condos:** mobile home accounts (account numbers starting with `M`) and condo units normally have no land line. They are not flagged as missing a land record, and they appear on the map as *Mobile home / condo (no land line)*.
 
 ## Project layout
 
