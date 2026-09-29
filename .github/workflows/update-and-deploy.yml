@@ -1,0 +1,79 @@
+name: Update data & deploy
+
+# Runs on every push to main. If new downloads were added to data/incoming/,
+# it cleans them, rebuilds data/attributes.json, commits the result, and then
+# publishes the site to GitHub Pages.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      rebuild:
+        description: "Rebuild data/attributes.json from data/source even if nothing new was uploaded"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for new downloads
+        id: incoming
+        run: |
+          if ls data/incoming/*.xlsx data/incoming/*.csv data/incoming/*.XLSX data/incoming/*.CSV >/dev/null 2>&1 \
+             || [ "${{ inputs.rebuild }}" = "true" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.incoming.outputs.run == 'true'
+        with:
+          python-version: "3.11"
+
+      - name: Clean data & rebuild
+        if: steps.incoming.outputs.run == 'true'
+        run: |
+          pip install pandas openpyxl
+          python scripts/build_data.py
+
+      - name: Commit rebuilt data
+        if: steps.incoming.outputs.run == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+          git add -A data
+          git diff --cached --quiet || git commit -m "Rebuild land attribute data from new downloads"
+          git push
+
+      - name: Assemble site
+        run: |
+          mkdir -p _site/data
+          cp index.html _site/
+          cp -r assets _site/
+          cp data/attributes.json data/geo_index.json data/parcels.geojson _site/data/
+          touch _site/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

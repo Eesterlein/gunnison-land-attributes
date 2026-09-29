@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gunnison Land Attributes</title>
+<meta name="description" content="Independent research dashboard for exploring land attributes on Gunnison County, Colorado parcels using publicly available assessor data.">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <h1>Gunnison County Land Attributes</h1>
+    <span class="tag">Independent research · public data · not an official county product</span>
+  </div>
+  <nav class="tabs" role="tablist">
+    <a href="#map" data-page="map" role="tab">Map</a>
+    <a href="#stats" data-page="stats" role="tab">Review &amp; Stats</a>
+    <a href="#about" data-page="about" role="tab">About</a>
+  </nav>
+  <div class="search">
+    <input id="search" type="search" placeholder="Search account, parcel, address, subdivision, area…" autocomplete="off" aria-label="Search">
+    <ul id="search-results" class="search-results" hidden></ul>
+  </div>
+</header>
+
+<!-- ============================ MAP PAGE ============================ -->
+<main id="page-map" class="page">
+  <aside class="panel" id="map-panel">
+    <section>
+      <label class="lbl" for="cat">Land attribute</label>
+      <select id="cat"></select>
+    </section>
+    <section class="values-section">
+      <div class="row between">
+        <label class="lbl" for="value-filter">Sub-attribute</label>
+        <div class="flip">
+          <button id="prev" title="Previous value (↑ or K)" aria-label="Previous value">▲</button>
+          <button id="next" title="Next value (↓ or J)" aria-label="Next value">▼</button>
+        </div>
+      </div>
+      <input id="value-filter" type="search" placeholder="Filter values…" autocomplete="off">
+      <ul id="values" class="values" role="listbox" aria-label="Attribute values"></ul>
+    </section>
+    <section class="summary" id="summary"></section>
+    <details class="filters" open>
+      <summary>Filters</summary>
+      <label class="lbl">Account type</label>
+      <div id="type-chips" class="chips"></div>
+      <label class="lbl" for="area">Area</label>
+      <select id="area"></select>
+      <label class="check"><input type="checkbox" id="show-flags"> Outline parcels that differ from their neighbors or have conflicting entries on this attribute</label>
+    </details>
+    <section>
+      <label class="lbl">Basemap</label>
+      <div class="seg" id="basemap">
+        <button data-bm="light" class="on">Light</button>
+        <button data-bm="aerial">Aerial</button>
+        <button data-bm="topo">Topo</button>
+      </div>
+    </section>
+    <div class="legend" id="legend">
+      <span><i class="sw sw-hl"></i>Has selected value</span>
+      <span><i class="sw sw-other"></i>Other value</span>
+      <span><i class="sw sw-none"></i>No land record / filtered out</span>
+      <span class="flag-legend" hidden><i class="sw sw-flag"></i>⚠ Differs from neighbors / conflict</span>
+    </div>
+  </aside>
+  <div class="map-wrap">
+    <div id="map"></div>
+    <div id="loading" class="loading">Loading parcels…</div>
+    <div id="hover-tip" class="hover-tip" hidden></div>
+    <aside id="detail" class="detail" hidden>
+      <button class="close" id="detail-close" aria-label="Close">×</button>
+      <div id="detail-body"></div>
+    </aside>
+  </div>
+</main>
+
+<!-- ============================ STATS PAGE ============================ -->
+<main id="page-stats" class="page scroll" hidden>
+  <div class="stats-inner">
+    <div class="filter-row">
+      <div><label class="lbl">Account type</label><div id="s-type-chips" class="chips"></div></div>
+      <div><label class="lbl" for="s-area">Area</label><select id="s-area"></select></div>
+    </div>
+
+    <div class="tiles" id="tiles"></div>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Attribute coverage by account type</h2>
+        <p class="sub">Share of accounts with a land record that have at least one value for each attribute. Click a cell to list the accounts missing it.</p>
+      </div>
+      <div class="table-scroll"><table class="coverage" id="coverage"></table></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Neighborhood consistency</h2>
+        <p class="sub">Flags accounts whose value differs from what most comparable properties around them carry. Neighbors are parcels within ~60 ft (across a typical road); stacked condo units count as neighbors of each other.</p>
+      </div>
+      <div class="controls">
+        <div><label class="lbl" for="nb-basis">Compare against</label>
+          <select id="nb-basis"><option value="adjacent">Adjacent parcels</option><option value="subdivision">Same subdivision</option></select></div>
+        <div><label class="lbl" for="nb-min">Minimum comparables</label>
+          <input id="nb-min" type="number" min="2" max="50" value="4"></div>
+        <div><label class="lbl" for="nb-agree">Neighbors agreeing</label>
+          <select id="nb-agree"><option value="0.6">60%+</option><option value="0.75" selected>75%+</option><option value="0.9">90%+</option><option value="1">100%</option></select></div>
+      </div>
+      <div class="table-scroll"><table class="issues" id="issue-summary"></table></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head row between wrap">
+        <div>
+          <h2>Attribute values</h2>
+          <p class="sub">Accounts carrying each value (an account can carry several values in multi-value attributes).</p>
+        </div>
+        <select id="dist-cat"></select>
+      </div>
+      <div id="dist" class="bars"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head row between wrap">
+        <div>
+          <h2>Review list</h2>
+          <p class="sub" id="review-count"></p>
+        </div>
+        <button id="export" class="btn">Download CSV</button>
+      </div>
+      <div class="controls">
+        <div><label class="lbl" for="r-issue">Issue</label><select id="r-issue"></select></div>
+        <div><label class="lbl" for="r-cat">Attribute</label><select id="r-cat"></select></div>
+        <div class="grow"><label class="lbl" for="r-text">Contains</label><input id="r-text" type="search" placeholder="account, subdivision, value…"></div>
+      </div>
+      <div class="table-scroll"><table class="review" id="review"></table></div>
+      <button id="more" class="btn ghost" hidden>Show more</button>
+    </section>
+  </div>
+</main>
+
+<!-- ============================ ABOUT PAGE ============================ -->
+<main id="page-about" class="page scroll" hidden>
+  <div class="stats-inner prose">
+    <h2>About this dashboard</h2>
+    <p><strong>This is an independent research project built from publicly available Gunnison County, Colorado assessor data and GIS parcel data.</strong> It is not an official product of the Gunnison County Assessor's Office or Gunnison County, and it is not a system of record. Values, attributes and parcel lines may be out of date or contain errors. Always confirm against the official assessor records before relying on anything shown here.</p>
+    <h3>What it shows</h3>
+    <ul>
+      <li><strong>Map:</strong> every parcel in the county. Pick a land attribute and a sub-attribute to light up the parcels that carry it, then flip through values with ▲▼ (or the ↑↓ / J K keys).</li>
+      <li><strong>Review &amp; Stats:</strong> which accounts have which land attributes, which are missing core attributes, internal data conflicts, and accounts that don't match the properties around them.</li>
+    </ul>
+    <h3>Data</h3>
+    <dl id="about-data" class="kv"></dl>
+    <h3>How the data was cleaned</h3>
+    <ul>
+      <li>The Land Attributes export's header row is shifted; the land-use class, legal description and subdivision columns are identified by content.</li>
+      <li>The packed <em>Other Attributes</em> text is split into its own attributes: Land Type Primary/Secondary, Views, Unique Characteristics, Easements, Deed Restrictions, Mining District and Arrowhead lot attributes.</li>
+      <li><em>Site Access</em> is split into road type (paved, gravel, 4×4…) and maintenance (year-round / seasonal, government / private).</li>
+      <li>Multi-value fields (LEA, utilities, land-use class) are split into individual values; repeated entries are removed and flagged.</li>
+      <li>Stacked condo polygons are collapsed to one map shape; each shape lists every account on it.</li>
+    </ul>
+    <h3>Review checks</h3>
+    <ul id="about-checks"></ul>
+  </div>
+</main>
+
+<div id="tip" class="tip" hidden></div>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
