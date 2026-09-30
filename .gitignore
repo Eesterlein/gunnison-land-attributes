@@ -2,3 +2,6 @@
 __pycache__/
 _site/
 ~$*
+
+# Realware API sample responses: may contain owner data, never commit
+api-samples/
