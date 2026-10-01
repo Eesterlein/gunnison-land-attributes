@@ -297,9 +297,13 @@
     const tipEl = $("hover-tip"); let pending = null;
     map.on("mousemove", "parcels-fill", (e) => {
       map.getCanvas().style.cursor = "pointer";
-      pending = e; requestAnimationFrame(() => {
+      // MapLibre clears e.features after this handler returns, so capture what we need now.
+      const f = e.features && e.features[0]; if (!f) return;
+      const queued = pending; pending = { fp: f.id, point: e.point };
+      if (queued) return;
+      requestAnimationFrame(() => {
         if (!pending) return; const ev = pending; pending = null;
-        const fp = ev.features[0].id; const accts = fpAccts[fp] || [];
+        const fp = ev.fp; const accts = fpAccts[fp] || [];
         const a = A[accts[0]];
         let html = a ? `<strong>${esc(a.address || a.account)}</strong>` : `<strong>Parcel ${esc(GEO[fp][1][0] || "")}</strong>`;
         if (accts.length > 1) html += ` <span class="m">+${accts.length - 1} more account${accts.length > 2 ? "s" : ""}</span>`;
