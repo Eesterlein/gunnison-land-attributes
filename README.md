@@ -1,6 +1,6 @@
-# Gunnison County Land Attributes Dashboard
+# Gunnison County Land Attributes Dashboard (Demo)
 
-**Live site:** https://eesterlein.github.io/gunnison-land-attributes/
+**Live site:** https://eesterlein.github.io/gunnison-land-attributes-demo/
 
 > **Independent research project.** This dashboard is an independent research project built from publicly available Gunnison County, Colorado assessor data downloads and GIS parcel data. It is **not** an official product of the Gunnison County Assessor's Office or Gunnison County, is not a system of record, and may contain errors or out-of-date information. Always verify against official county records.
 
